@@ -83,25 +83,34 @@ function Get-AzureEnvironmentName {
 }
 
 function Get-AccessToken {
-    param([string]$Endpoint)
+    param(
+        [string]$Endpoint,
+        [string]$AzureEnvironmentName
+    )
 
-    # Get the resource URL and remove trailing slash for token acquisition
     $resourceUrl = Get-BAPResourceUrl -Endpoint $Endpoint
-    $resource = $resourceUrl.TrimEnd('/')
 
-    Write-Host "Acquiring access token for: $resource" -ForegroundColor Green
+    Write-Host "Acquiring access token for: $resourceUrl" -ForegroundColor Green
 
-    try {
-        # Try with -Resource parameter (more reliable in Cloud Shell)
-        $token = Get-AzAccessToken -Resource $resource -ErrorAction Stop
-        return $token.Token
-    }
-    catch {
-        Write-Host "Failed to get token with -Resource parameter, trying -ResourceUrl..." -ForegroundColor Yellow
-        # Fallback to -ResourceUrl if -Resource fails
+    # First attempt: Try to get token silently
+    $token = Get-AzAccessToken -ResourceUrl $resourceUrl -ErrorAction SilentlyContinue
+
+    if ($null -eq $token) {
+        Write-Host "Silent token acquisition failed. Authenticating interactively with AuthScope..." -ForegroundColor Yellow
+        Write-Host "You may be prompted for device code authentication (no browser window needed)." -ForegroundColor Yellow
+
+        # Re-authenticate with AuthScope to get token for BAP API
+        Connect-AzAccount -Environment $AzureEnvironmentName -AuthScope $resourceUrl -ErrorAction Stop | Out-Null
+
+        # Try again after re-authentication
         $token = Get-AzAccessToken -ResourceUrl $resourceUrl -ErrorAction Stop
-        return $token.Token
     }
+
+    if ($null -eq $token -or [string]::IsNullOrEmpty($token.Token)) {
+        throw "Failed to acquire access token for BAP API. Please check your Azure login."
+    }
+
+    return $token.Token
 }
 
 function Invoke-BAPApi {
@@ -240,7 +249,7 @@ else {
 
 # Step 2: Get access token for BAP API
 Write-Host "`n[2/4] Acquiring BAP API access token..." -ForegroundColor Cyan
-$accessToken = Get-AccessToken -Endpoint $endpoint
+$accessToken = Get-AccessToken -Endpoint $endpoint -AzureEnvironmentName $azureEnvName
 
 # Step 3: Validate environment and policy
 Write-Host "`n[3/4] Validating environment and policy..." -ForegroundColor Cyan
