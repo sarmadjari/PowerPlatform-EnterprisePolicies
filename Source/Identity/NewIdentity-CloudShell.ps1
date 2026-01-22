@@ -13,6 +13,9 @@ Azure Cloud Shell compatible version of NewIdentity that uses Azure access token
 This script links an Enterprise Identity Policy to a Power Platform environment using only Azure authentication,
 making it fully compatible with Azure Cloud Shell without requiring interactive Power Platform login.
 
+IMPORTANT: This script is completely self-contained and does NOT require any Power Platform PowerShell modules.
+It should be run directly without dot-sourcing any other scripts from the repository.
+
 .PARAMETER environmentId
 The GUID of the Power Platform environment
 
@@ -26,6 +29,7 @@ The BAP endpoint (tip1, tip2, prod, usgovhigh, dod, china). Defaults to "prod"
 ./NewIdentity-CloudShell.ps1 -environmentId "abc123..." -policyArmId "/subscriptions/.../enterprisePolicies/myPolicy" -endpoint "prod"
 #>
 
+[CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)]
     [ValidateNotNullOrEmpty()]
@@ -40,7 +44,17 @@ param(
     [String]$endpoint = "prod"
 )
 
+# CRITICAL: Stop immediately if any Power Platform modules try to load
 $ErrorActionPreference = "Stop"
+$ProgressPreference = 'SilentlyContinue'
+
+# Verify we're not accidentally importing Power Platform modules
+$loadedModules = Get-Module | Where-Object { $_.Name -like "*PowerApps*" -or $_.Name -like "*PowerPlatform*" }
+if ($loadedModules) {
+    Write-Warning "Detected Power Platform modules already loaded. This script is designed to work WITHOUT them."
+    Write-Warning "Loaded modules: $($loadedModules.Name -join ', ')"
+    Write-Warning "Continuing anyway, but this may cause conflicts..."
+}
 
 #region Helper Functions
 
