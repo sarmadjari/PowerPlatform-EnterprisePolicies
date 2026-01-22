@@ -85,11 +85,23 @@ function Get-AzureEnvironmentName {
 function Get-AccessToken {
     param([string]$Endpoint)
 
+    # Get the resource URL and remove trailing slash for token acquisition
     $resourceUrl = Get-BAPResourceUrl -Endpoint $Endpoint
-    Write-Host "Acquiring access token for: $resourceUrl" -ForegroundColor Green
+    $resource = $resourceUrl.TrimEnd('/')
 
-    $token = Get-AzAccessToken -ResourceUrl $resourceUrl -ErrorAction Stop
-    return $token.Token
+    Write-Host "Acquiring access token for: $resource" -ForegroundColor Green
+
+    try {
+        # Try with -Resource parameter (more reliable in Cloud Shell)
+        $token = Get-AzAccessToken -Resource $resource -ErrorAction Stop
+        return $token.Token
+    }
+    catch {
+        Write-Host "Failed to get token with -Resource parameter, trying -ResourceUrl..." -ForegroundColor Yellow
+        # Fallback to -ResourceUrl if -Resource fails
+        $token = Get-AzAccessToken -ResourceUrl $resourceUrl -ErrorAction Stop
+        return $token.Token
+    }
 }
 
 function Invoke-BAPApi {
