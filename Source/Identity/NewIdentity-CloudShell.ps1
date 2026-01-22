@@ -96,11 +96,11 @@ function Get-AccessToken {
     $token = Get-AzAccessToken -ResourceUrl $resourceUrl -ErrorAction SilentlyContinue
 
     if ($null -eq $token) {
-        Write-Host "Silent token acquisition failed. Authenticating interactively with AuthScope..." -ForegroundColor Yellow
-        Write-Host "You may be prompted for device code authentication (no browser window needed)." -ForegroundColor Yellow
+        Write-Host "Silent token acquisition failed. Authenticating with device code..." -ForegroundColor Yellow
+        Write-Host "You will be given a code to enter at https://microsoft.com/devicelogin" -ForegroundColor Yellow
 
-        # Re-authenticate with AuthScope to get token for BAP API
-        Connect-AzAccount -Environment $AzureEnvironmentName -AuthScope $resourceUrl -ErrorAction Stop | Out-Null
+        # Re-authenticate with AuthScope using device code flow
+        Connect-AzAccount -Environment $AzureEnvironmentName -AuthScope $resourceUrl -UseDeviceAuthentication -ErrorAction Stop | Out-Null
 
         # Try again after re-authentication
         $token = Get-AzAccessToken -ResourceUrl $resourceUrl -ErrorAction Stop
@@ -181,8 +181,8 @@ function Get-EnterprisePolicySystemId {
     # Ensure connected to Azure
     $context = Get-AzContext
     if ($null -eq $context) {
-        Write-Host "Connecting to Azure: $AzureEnvironmentName" -ForegroundColor Green
-        Connect-AzAccount -Environment $AzureEnvironmentName -ErrorAction Stop | Out-Null
+        Write-Host "Connecting to Azure: $AzureEnvironmentName (using device code)" -ForegroundColor Green
+        Connect-AzAccount -Environment $AzureEnvironmentName -UseDeviceAuthentication -ErrorAction Stop | Out-Null
     }
 
     $policy = Get-AzResource -ResourceId $PolicyArmId -ErrorAction Stop
@@ -240,8 +240,8 @@ Write-Host "[1/4] Ensuring Azure connection to $azureEnvName..." -ForegroundColo
 
 $context = Get-AzContext
 if ($null -eq $context -or $context.Environment.Name -ne $azureEnvName) {
-    Write-Host "Connecting to Azure: $azureEnvName" -ForegroundColor Green
-    Connect-AzAccount -Environment $azureEnvName -ErrorAction Stop | Out-Null
+    Write-Host "Connecting to Azure: $azureEnvName (using device code authentication)" -ForegroundColor Green
+    Connect-AzAccount -Environment $azureEnvName -UseDeviceAuthentication -ErrorAction Stop | Out-Null
 }
 else {
     Write-Host "Already connected to Azure: $azureEnvName" -ForegroundColor Green
