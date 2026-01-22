@@ -24,6 +24,18 @@ function Login($endpoint) {
     }
 
     if ($logIn) {
+        # Ensure Power Platform modules are available (Cloud Shell does not ship them)
+        $paCmd = Get-Command Add-PowerAppsAccount -ErrorAction SilentlyContinue
+        if (-not $paCmd) {
+            Install-Module -Name Microsoft.PowerApps.PowerShell -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+            Install-Module -Name Microsoft.PowerApps.Administration.PowerShell -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+            Import-Module Microsoft.PowerApps.PowerShell -ErrorAction Stop
+            Import-Module Microsoft.PowerApps.Administration.PowerShell -ErrorAction Stop
+        }
+        else {
+            Import-Module Microsoft.PowerApps.PowerShell -ErrorAction SilentlyContinue
+            Import-Module Microsoft.PowerApps.Administration.PowerShell -ErrorAction SilentlyContinue
+        }
         $result = Add-PowerAppsAccount -Endpoint $endpoint
         echo $result
     }
