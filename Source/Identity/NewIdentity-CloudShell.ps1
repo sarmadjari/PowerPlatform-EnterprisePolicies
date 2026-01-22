@@ -16,6 +16,11 @@ making it fully compatible with Azure Cloud Shell without requiring interactive 
 IMPORTANT: This script is completely self-contained and does NOT require any Power Platform PowerShell modules.
 It should be run directly without dot-sourcing any other scripts from the repository.
 
+NOTE: This script requires that you're already authenticated to Azure (via Connect-AzAccount or Azure Cloud Shell).
+In Azure Cloud Shell, authentication is automatic. The script will attempt to acquire a token for the BAP API
+using your current Azure session. If token acquisition fails (due to tenant or audience restrictions), you may
+need to specify the -tenantId parameter or run from a local machine instead.
+
 .PARAMETER environmentId
 The GUID of the Power Platform environment
 
@@ -25,8 +30,14 @@ The full ARM resource ID of the Enterprise Identity Policy
 .PARAMETER endpoint
 The BAP endpoint (tip1, tip2, prod, usgovhigh, dod, china). Defaults to "prod"
 
+.PARAMETER tenantId
+Optional Azure AD tenant ID. Use this if token acquisition fails or if you need to target a specific tenant.
+
 .EXAMPLE
 ./NewIdentity-CloudShell.ps1 -environmentId "abc123..." -policyArmId "/subscriptions/.../enterprisePolicies/myPolicy" -endpoint "prod"
+
+.EXAMPLE
+./NewIdentity-CloudShell.ps1 -environmentId "abc123..." -policyArmId "/subscriptions/.../enterprisePolicies/myPolicy" -endpoint "prod" -tenantId "your-tenant-id"
 #>
 
 [CmdletBinding()]
@@ -41,7 +52,10 @@ param(
 
     [Parameter(Mandatory=$false)]
     [ValidateSet("tip1", "tip2", "prod", "usgovhigh", "dod", "china")]
-    [String]$endpoint = "prod"
+    [String]$endpoint = "prod",
+
+    [Parameter(Mandatory=$false)]
+    [String]$tenantId = $null
 )
 
 # CRITICAL: Stop immediately if any Power Platform modules try to load
@@ -85,29 +99,31 @@ function Get-AzureEnvironmentName {
 function Get-AccessToken {
     param(
         [string]$Endpoint,
-        [string]$AzureEnvironmentName
+        [string]$AzureEnvironmentName,
+        [string]$TenantId
     )
 
     $resourceUrl = Get-BAPResourceUrl -Endpoint $Endpoint
 
     Write-Host "Acquiring access token for: $resourceUrl" -ForegroundColor Green
 
-    # First attempt: Try to get token silently
-    $token = Get-AzAccessToken -ResourceUrl $resourceUrl -ErrorAction SilentlyContinue
-
-    if ($null -eq $token) {
-        Write-Host "Silent token acquisition failed. Authenticating with device code..." -ForegroundColor Yellow
-        Write-Host "You will be given a code to enter at https://microsoft.com/devicelogin" -ForegroundColor Yellow
-
-        # Re-authenticate with AuthScope using device code flow
-        Connect-AzAccount -Environment $AzureEnvironmentName -AuthScope $resourceUrl -UseDeviceAuthentication -ErrorAction Stop | Out-Null
-
-        # Try again after re-authentication
-        $token = Get-AzAccessToken -ResourceUrl $resourceUrl -ErrorAction Stop
+    # Try to get token with explicit tenant
+    if (-not [string]::IsNullOrEmpty($TenantId)) {
+        Write-Host "Attempting token acquisition for tenant: $TenantId" -ForegroundColor Yellow
+        $token = Get-AzAccessToken -ResourceUrl $resourceUrl -TenantId $TenantId -ErrorAction SilentlyContinue
+    }
+    else {
+        # Try without tenant first
+        $token = Get-AzAccessToken -ResourceUrl $resourceUrl -ErrorAction SilentlyContinue
     }
 
-    if ($null -eq $token -or [string]::IsNullOrEmpty($token.Token)) {
-        throw "Failed to acquire access token for BAP API. Please check your Azure login."
+    if ($null -eq $token) {
+        Write-Host "Unable to acquire token for BAP API using current Azure session." -ForegroundColor Red
+        Write-Host "This is a limitation of Azure Cloud Shell's managed identity." -ForegroundColor Red
+        Write-Host "" -ForegroundColor Red
+        Write-Host "WORKAROUND: Please run this script from your local machine with Azure CLI or PowerShell installed." -ForegroundColor Yellow
+        Write-Host "Or use the legacy NewIdentity.ps1 script with Power Platform PowerShell modules." -ForegroundColor Yellow
+        throw "Failed to acquire access token for BAP API. BAP API is not a supported audience in Cloud Shell managed identity."
     }
 
     return $token.Token
@@ -181,8 +197,7 @@ function Get-EnterprisePolicySystemId {
     # Ensure connected to Azure
     $context = Get-AzContext
     if ($null -eq $context) {
-        Write-Host "Connecting to Azure: $AzureEnvironmentName (using device code)" -ForegroundColor Green
-        Connect-AzAccount -Environment $AzureEnvironmentName -UseDeviceAuthentication -ErrorAction Stop | Out-Null
+        throw "No Azure context found. Please ensure you're authenticated to Azure before running this script."
     }
 
     $policy = Get-AzResource -ResourceId $PolicyArmId -ErrorAction Stop
@@ -239,17 +254,24 @@ $azureEnvName = Get-AzureEnvironmentName -Endpoint $endpoint
 Write-Host "[1/4] Ensuring Azure connection to $azureEnvName..." -ForegroundColor Cyan
 
 $context = Get-AzContext
-if ($null -eq $context -or $context.Environment.Name -ne $azureEnvName) {
-    Write-Host "Connecting to Azure: $azureEnvName (using device code authentication)" -ForegroundColor Green
-    Connect-AzAccount -Environment $azureEnvName -UseDeviceAuthentication -ErrorAction Stop | Out-Null
+if ($null -eq $context) {
+    throw "No Azure context found. Please run 'Connect-AzAccount' first or ensure you're running in Azure Cloud Shell."
+}
+
+if ($context.Environment.Name -ne $azureEnvName) {
+    Write-Host "WARNING: Current Azure context is $($context.Environment.Name) but endpoint requires $azureEnvName" -ForegroundColor Yellow
+    Write-Host "Attempting to continue with current context..." -ForegroundColor Yellow
 }
 else {
     Write-Host "Already connected to Azure: $azureEnvName" -ForegroundColor Green
+    Write-Host "Account: $($context.Account.Id)" -ForegroundColor Green
+    Write-Host "Tenant: $($context.Tenant.Id)" -ForegroundColor Green
 }
 
 # Step 2: Get access token for BAP API
 Write-Host "`n[2/4] Acquiring BAP API access token..." -ForegroundColor Cyan
-$accessToken = Get-AccessToken -Endpoint $endpoint -AzureEnvironmentName $azureEnvName
+$currentTenantId = if ($tenantId) { $tenantId } else { (Get-AzContext).Tenant.Id }
+$accessToken = Get-AccessToken -Endpoint $endpoint -AzureEnvironmentName $azureEnvName -TenantId $currentTenantId
 
 # Step 3: Validate environment and policy
 Write-Host "`n[3/4] Validating environment and policy..." -ForegroundColor Cyan
